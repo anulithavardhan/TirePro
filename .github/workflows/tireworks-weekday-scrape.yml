@@ -1,0 +1,40 @@
+name: Tireworks weekday scrape
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * 1-5'
+      timezone: 'America/New_York'
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Scrape Tireworks
+        shell: bash
+        run: |
+          mkdir -p results
+          run_date="$(TZ=America/New_York date +%F)"
+          node scrape.mjs --input input.tsv --output "results/tireworks-prices-${run_date}.csv"
+      - name: Upload CSV files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tireworks-prices-${{ github.run_number }}
+          path: results/*.csv
+          if-no-files-found: warn
+          retention-days: 30
