@@ -15,7 +15,9 @@ function arg(name, fallback) {
 const inputFile = path.resolve(arg('input', 'input.tsv'));
 const outputFile = path.resolve(arg('output', `tireworks-prices-${new Date().toISOString().slice(0, 10)}.csv`));
 const headless = arg('headless', 'true').toLowerCase() !== 'false';
-const delayMs = Number(arg('delay-ms', '500'));
+const delayMs = Number(arg('delay-ms', '1500'));
+const batchSize = Number(arg('batch-size', '40'));
+const batchPauseMs = Number(arg('batch-pause-ms', '60000'));
 
 function parseInput(text) {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
@@ -69,7 +71,7 @@ for (const row of requested) {
   groups.get(key).rows.push(row);
 }
 
-const browser = await chromium.launch({ headless });
+let browser = await chromium.launch({ headless });
 const results = [];
 const missing = [];
 
@@ -77,6 +79,12 @@ try {
   let done = 0;
   for (const { size, rows } of groups.values()) {
     done += 1;
+    if (done > 1 && batchSize > 0 && (done - 1) % batchSize === 0) {
+      console.log(`Cooling down for ${Math.round(batchPauseMs / 1000)}s after ${done - 1} sizes...`);
+      await browser.close().catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, batchPauseMs));
+      browser = await chromium.launch({ headless });
+    }
     console.log(`[${done}/${groups.size}] ${size.width}/${size.height}R${size.rim}`);
     let cards = null;
     let lastError = '';
@@ -108,15 +116,26 @@ try {
       } catch (error) {
         lastError = error?.message?.split('\n')[0] || String(error);
         console.warn(`  attempt ${attempt}/3 failed: ${lastError}`);
-        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        if (attempt < 3) {
+          const retryPauseMs = attempt * 60000;
+          console.log(`  restarting browser and waiting ${retryPauseMs / 1000}s before retry...`);
+          await page.close().catch(() => {});
+          await browser.close().catch(() => {});
+          await new Promise(resolve => setTimeout(resolve, retryPauseMs));
+          browser = await chromium.launch({ headless });
+        }
       } finally {
-        await page.close();
+        await page.close().catch(() => {});
       }
     }
 
     if (cards === null) {
       console.error(`  skipped after 3 attempts`);
       missing.push(...rows.map(row => ({ ...row, reason: `scrape_failed: ${lastError}` })));
+      console.log('  cooling down for 120s before continuing with the next size...');
+      await browser.close().catch(() => {});
+      await new Promise(resolve => setTimeout(resolve, 120000));
+      browser = await chromium.launch({ headless });
       continue;
     }
 
