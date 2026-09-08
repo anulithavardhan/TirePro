@@ -42,6 +42,7 @@ jobs:
           run_date="$(TZ=America/New_York date +%F)"
           node scrape.mjs \
             --input input.tsv \
+            --map gt-radial-map.csv \
             --output "results/tireworks-prices-${run_date}-part-${{ matrix.shard }}.csv" \
             --shard-index "${{ matrix.shard }}" \
             --shard-total 5
