@@ -80,11 +80,20 @@ try {
     done += 1;
     console.log(`[${done}/${groups.size}] ${size.width}/${size.height}R${size.rim}`);
     await page.goto(searchUrl(size), { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForFunction(() =>
-      document.querySelector('[data-tctid="result"]') ||
-      /(?:found\s+0|no tires|no results)/i.test(document.body.innerText),
-      null, { timeout: 45000 }
-    ).catch(() => {});
+    await page.waitForFunction(({ width, height, rim }) => {
+      const title = document.querySelector('[data-tctid="page_title"]')?.textContent?.trim().toUpperCase() || '';
+      const metric = title.match(/^(?:LT)?(\d{3})\/(\d{2})R(\d{2}(?:\.5)?)/);
+      const flotation = title.match(/^(\d{2}(?:\.\d+)?)X(\d{1,2}(?:\.\d+)?)R(\d{2}(?:\.5)?)/);
+      const shown = metric || flotation;
+      const correctSize = shown &&
+        Number(shown[1]) === Number(width) &&
+        Number(shown[2]) === Number(height) &&
+        Number(shown[3]) === Number(rim);
+      return correctSize && (
+        document.querySelector('[data-tctid="result"]') ||
+        /(?:found\s+0|no tires|no results)/i.test(document.body.innerText)
+      );
+    }, size, { timeout: 45000 });
 
     const cards = await page.locator('[data-tctid="result"]').evaluateAll(nodes => nodes.map(card => ({
       brand: card.querySelector('[data-tctid="product_brand"] img')?.getAttribute('alt')?.replace(/\s*Tire\.?$/i, '').trim() || 'GT Radial',
