@@ -18,6 +18,11 @@ const headless = arg('headless', 'true').toLowerCase() !== 'false';
 const delayMs = Number(arg('delay-ms', '1500'));
 const batchSize = Number(arg('batch-size', '40'));
 const batchPauseMs = Number(arg('batch-pause-ms', '60000'));
+const shardIndex = Number(arg('shard-index', '0'));
+const shardTotal = Number(arg('shard-total', '1'));
+if (!Number.isInteger(shardIndex) || !Number.isInteger(shardTotal) || shardTotal < 1 || shardIndex < 0 || shardIndex >= shardTotal) {
+  throw new Error('Invalid shard settings. Use --shard-index 0..N-1 with --shard-total N.');
+}
 
 function parseInput(text) {
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
@@ -70,6 +75,8 @@ for (const row of requested) {
   if (!groups.has(key)) groups.set(key, { size, rows: [] });
   groups.get(key).rows.push(row);
 }
+const selectedGroups = [...groups.values()].filter((_, index) => index % shardTotal === shardIndex);
+console.log(`Shard ${shardIndex + 1}/${shardTotal}: ${selectedGroups.length} of ${groups.size} unique sizes`);
 
 let browser = await chromium.launch({ headless });
 const results = [];
@@ -77,7 +84,7 @@ const missing = [];
 
 try {
   let done = 0;
-  for (const { size, rows } of groups.values()) {
+  for (const { size, rows } of selectedGroups) {
     done += 1;
     if (done > 1 && batchSize > 0 && (done - 1) % batchSize === 0) {
       console.log(`Cooling down for ${Math.round(batchPauseMs / 1000)}s after ${done - 1} sizes...`);
@@ -85,7 +92,7 @@ try {
       await new Promise(resolve => setTimeout(resolve, batchPauseMs));
       browser = await chromium.launch({ headless });
     }
-    console.log(`[${done}/${groups.size}] ${size.width}/${size.height}R${size.rim}`);
+    console.log(`[${done}/${selectedGroups.length}] ${size.width}/${size.height}R${size.rim}`);
     let cards = null;
     let lastError = '';
     for (let attempt = 1; attempt <= 3 && cards === null; attempt += 1) {
