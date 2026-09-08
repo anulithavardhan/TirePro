@@ -102,7 +102,9 @@ try {
         await page.waitForFunction(({ width, height, rim }) => {
           const title = document.querySelector('[data-tctid="page_title"]')?.textContent?.trim().toUpperCase() || '';
           const metric = title.match(/^(?:LT)?(\d{3})\/(\d{2})R(\d{2}(?:\.5)?)/);
-          const flotation = title.match(/^(\d{2}(?:\.\d+)?)X(\d{1,2}(?:\.\d+)?)R(\d{2}(?:\.5)?)/);
+          // Tireworks displays flotation search titles with a slash (35/12.5R20)
+          // even though product sizes use an X (35x12.5R20LT).
+          const flotation = title.match(/^(\d{2}(?:\.\d+)?)[X/](\d{1,2}(?:\.\d+)?)R(\d{2}(?:\.5)?)/);
           const shown = metric || flotation;
           const correctSize = shown &&
             Number(shown[1]) === Number(width) &&
