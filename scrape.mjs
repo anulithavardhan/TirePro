@@ -13,6 +13,7 @@ function arg(name, fallback) {
 }
 
 const inputFile = path.resolve(arg('input', 'input.tsv'));
+const mapFile = path.resolve(arg('map', 'gt-radial-map.csv'));
 const outputFile = path.resolve(arg('output', `tireworks-prices-${new Date().toISOString().slice(0, 10)}.csv`));
 const headless = arg('headless', 'true').toLowerCase() !== 'false';
 const delayMs = Number(arg('delay-ms', '1500'));
@@ -38,6 +39,45 @@ function parseInput(text) {
     seen.add(key);
     return true;
   });
+}
+
+function parseCsv(text) {
+  const records = [];
+  let record = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') { field += '"'; i += 1; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { record.push(field); field = ''; }
+    else if (ch === '\n') { record.push(field.replace(/\r$/, '')); records.push(record); record = []; field = ''; }
+    else field += ch;
+  }
+  if (field || record.length) { record.push(field.replace(/\r$/, '')); records.push(record); }
+  return records;
+}
+
+function sizeKey(value) {
+  return String(value).trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function loadMap(text) {
+  const records = parseCsv(text.replace(/^\uFEFF/, '')).filter(row => row.some(Boolean));
+  const headers = records.shift()?.map(v => v.trim()) || [];
+  const productIndex = headers.indexOf('Brand+Product');
+  const sizeIndex = headers.indexOf('Rawsize');
+  const mapIndex = headers.indexOf('MAP');
+  if ([productIndex, sizeIndex, mapIndex].includes(-1)) {
+    throw new Error('MAP file must contain Brand+Product, Rawsize, and MAP columns.');
+  }
+  return new Map(records.map(row => [
+    `${productKey(row[productIndex])}|${sizeKey(row[sizeIndex])}`,
+    row[mapIndex]?.trim() || ''
+  ]));
 }
 
 function parseSize(raw) {
@@ -68,6 +108,7 @@ function csv(value) {
 }
 
 const requested = parseInput(fs.readFileSync(inputFile, 'utf8'));
+const mapValues = loadMap(fs.readFileSync(mapFile, 'utf8'));
 const groups = new Map();
 for (const row of requested) {
   const size = parseSize(row.rawSize);
@@ -119,7 +160,7 @@ try {
         cards = await page.locator('[data-tctid="result"]').evaluateAll(nodes => nodes.map(card => ({
           brand: card.querySelector('[data-tctid="product_brand"] img')?.getAttribute('alt')?.replace(/\s*Tire\.?$/i, '').trim() || 'GT Radial',
           product: card.querySelector('[data-tctid="product_model"]')?.textContent?.trim() || '',
-          size: card.querySelector('[data-tctid="tire_size"]')?.textContent?.replace(/^Size:\s*/i, '').replace(/\s+/g, ' ').trim() || '',
+          size: (card.querySelector('[data-tctid="tire_size"]')?.textContent?.replace(/^Size:\s*/i, '').trim().split(/\s+/)[0]) || '',
           price: card.querySelector('[data-tctid="product_price"]')?.textContent?.trim() || ''
         })));
       } catch (error) {
@@ -151,7 +192,8 @@ try {
     for (const wanted of rows) {
       const matches = cards.filter(card => productKey(card.product) === productKey(wanted.product));
       if (!matches.length) missing.push({ ...wanted, reason: 'product_not_returned' });
-      for (const match of matches) results.push(match);
+      const map = mapValues.get(`${productKey(wanted.product)}|${sizeKey(wanted.rawSize)}`) || '';
+      for (const match of matches) results.push({ ...match, MAP: map, Website: 'Tire works' });
     }
     if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
   }
@@ -160,7 +202,7 @@ try {
 }
 
 fs.mkdirSync(path.dirname(outputFile), { recursive: true });
-const rows = [['brand', 'product', 'size', 'price'], ...results.map(r => [r.brand, r.product, r.size, r.price])];
+const rows = [['brand', 'product', 'size', 'price', 'MAP', 'Website'], ...results.map(r => [r.brand, r.product, r.size, r.price, r.MAP, r.Website])];
 fs.writeFileSync(outputFile, rows.map(r => r.map(csv).join(',')).join('\r\n') + '\r\n', 'utf8');
 
 const missingFile = outputFile.replace(/\.csv$/i, '-missing.csv');
