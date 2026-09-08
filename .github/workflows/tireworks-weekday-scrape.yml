@@ -15,8 +15,15 @@ concurrency:
 
 jobs:
   scrape:
+    name: Scrape part ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -33,12 +40,45 @@ jobs:
         run: |
           mkdir -p results
           run_date="$(TZ=America/New_York date +%F)"
-          node scrape.mjs --input input.tsv --output "results/tireworks-prices-${run_date}.csv"
-      - name: Upload CSV files
+          node scrape.mjs \
+            --input input.tsv \
+            --output "results/tireworks-prices-${run_date}-part-${{ matrix.shard }}.csv" \
+            --shard-index "${{ matrix.shard }}" \
+            --shard-total 5
+      - name: Upload shard CSV files
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tireworks-shard-${{ matrix.shard }}
+          path: results/*.csv
+          if-no-files-found: warn
+          retention-days: 7
+
+  merge:
+    name: Merge CSV files
+    needs: scrape
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all shard CSV files
+        uses: actions/download-artifact@v5
+        with:
+          pattern: tireworks-shard-*
+          path: parts
+          merge-multiple: true
+      - name: Merge price and missing reports
+        shell: bash
+        run: |
+          mkdir -p results
+          run_date="$(TZ=America/New_York date +%F)"
+          mapfile -t prices < <(find parts -type f -name 'tireworks-prices-*-part-*.csv' ! -name '*-missing.csv' | sort)
+          mapfile -t missing < <(find parts -type f -name 'tireworks-prices-*-part-*-missing.csv' | sort)
+          awk 'FNR == 1 && file_count++ > 0 { next } { print }' "${prices[@]}" > "results/tireworks-prices-${run_date}.csv"
+          awk 'FNR == 1 && file_count++ > 0 { next } { print }' "${missing[@]}" > "results/tireworks-prices-${run_date}-missing.csv"
+      - name: Upload combined CSV files
         uses: actions/upload-artifact@v4
         with:
           name: tireworks-prices-${{ github.run_number }}
           path: results/*.csv
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
