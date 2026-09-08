@@ -70,7 +70,6 @@ for (const row of requested) {
 }
 
 const browser = await chromium.launch({ headless });
-const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 const results = [];
 const missing = [];
 
@@ -79,35 +78,54 @@ try {
   for (const { size, rows } of groups.values()) {
     done += 1;
     console.log(`[${done}/${groups.size}] ${size.width}/${size.height}R${size.rim}`);
-    await page.goto(searchUrl(size), { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForFunction(({ width, height, rim }) => {
-      const title = document.querySelector('[data-tctid="page_title"]')?.textContent?.trim().toUpperCase() || '';
-      const metric = title.match(/^(?:LT)?(\d{3})\/(\d{2})R(\d{2}(?:\.5)?)/);
-      const flotation = title.match(/^(\d{2}(?:\.\d+)?)X(\d{1,2}(?:\.\d+)?)R(\d{2}(?:\.5)?)/);
-      const shown = metric || flotation;
-      const correctSize = shown &&
-        Number(shown[1]) === Number(width) &&
-        Number(shown[2]) === Number(height) &&
-        Number(shown[3]) === Number(rim);
-      return correctSize && (
-        document.querySelector('[data-tctid="result"]') ||
-        /(?:found\s+0|no tires|no results)/i.test(document.body.innerText)
-      );
-    }, size, { timeout: 45000 });
+    let cards = null;
+    let lastError = '';
+    for (let attempt = 1; attempt <= 3 && cards === null; attempt += 1) {
+      const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+      try {
+        await page.goto(searchUrl(size), { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await page.waitForFunction(({ width, height, rim }) => {
+          const title = document.querySelector('[data-tctid="page_title"]')?.textContent?.trim().toUpperCase() || '';
+          const metric = title.match(/^(?:LT)?(\d{3})\/(\d{2})R(\d{2}(?:\.5)?)/);
+          const flotation = title.match(/^(\d{2}(?:\.\d+)?)X(\d{1,2}(?:\.\d+)?)R(\d{2}(?:\.5)?)/);
+          const shown = metric || flotation;
+          const correctSize = shown &&
+            Number(shown[1]) === Number(width) &&
+            Number(shown[2]) === Number(height) &&
+            Number(shown[3]) === Number(rim);
+          return correctSize && (
+            document.querySelector('[data-tctid="result"]') ||
+            /(?:found\s+0|no tires|no results)/i.test(document.body.innerText)
+          );
+        }, size, { timeout: 60000 });
 
-    const cards = await page.locator('[data-tctid="result"]').evaluateAll(nodes => nodes.map(card => ({
-      brand: card.querySelector('[data-tctid="product_brand"] img')?.getAttribute('alt')?.replace(/\s*Tire\.?$/i, '').trim() || 'GT Radial',
-      product: card.querySelector('[data-tctid="product_model"]')?.textContent?.trim() || '',
-      size: card.querySelector('[data-tctid="tire_size"]')?.textContent?.replace(/^Size:\s*/i, '').replace(/\s+/g, ' ').trim() || '',
-      price: card.querySelector('[data-tctid="product_price"]')?.textContent?.trim() || ''
-    })));
+        cards = await page.locator('[data-tctid="result"]').evaluateAll(nodes => nodes.map(card => ({
+          brand: card.querySelector('[data-tctid="product_brand"] img')?.getAttribute('alt')?.replace(/\s*Tire\.?$/i, '').trim() || 'GT Radial',
+          product: card.querySelector('[data-tctid="product_model"]')?.textContent?.trim() || '',
+          size: card.querySelector('[data-tctid="tire_size"]')?.textContent?.replace(/^Size:\s*/i, '').replace(/\s+/g, ' ').trim() || '',
+          price: card.querySelector('[data-tctid="product_price"]')?.textContent?.trim() || ''
+        })));
+      } catch (error) {
+        lastError = error?.message?.split('\n')[0] || String(error);
+        console.warn(`  attempt ${attempt}/3 failed: ${lastError}`);
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+      } finally {
+        await page.close();
+      }
+    }
+
+    if (cards === null) {
+      console.error(`  skipped after 3 attempts`);
+      missing.push(...rows.map(row => ({ ...row, reason: `scrape_failed: ${lastError}` })));
+      continue;
+    }
 
     for (const wanted of rows) {
       const matches = cards.filter(card => productKey(card.product) === productKey(wanted.product));
-      if (!matches.length) missing.push(wanted);
+      if (!matches.length) missing.push({ ...wanted, reason: 'product_not_returned' });
       for (const match of matches) results.push(match);
     }
-    if (delayMs > 0) await page.waitForTimeout(delayMs);
+    if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
   }
 } finally {
   await browser.close();
@@ -118,7 +136,7 @@ const rows = [['brand', 'product', 'size', 'price'], ...results.map(r => [r.bran
 fs.writeFileSync(outputFile, rows.map(r => r.map(csv).join(',')).join('\r\n') + '\r\n', 'utf8');
 
 const missingFile = outputFile.replace(/\.csv$/i, '-missing.csv');
-const missingRows = [['product', 'requested_size'], ...missing.map(r => [r.product, r.rawSize])];
+const missingRows = [['product', 'requested_size', 'reason'], ...missing.map(r => [r.product, r.rawSize, r.reason])];
 fs.writeFileSync(missingFile, missingRows.map(r => r.map(csv).join(',')).join('\r\n') + '\r\n', 'utf8');
 console.log(`Wrote ${results.length} price rows to ${outputFile}`);
 console.log(`Wrote ${missing.length} unmatched requests to ${missingFile}`);
