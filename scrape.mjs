@@ -738,11 +738,69 @@ try {
         // GET PRODUCT CARDS
         // ----------------------------------------------------
 
+        const cardLocator =
+          page.locator(
+            '[data-tctid="result"]'
+          );
+
+
+        // TireWorks lazy-loads the specifications only after
+        // each card's SPECS section is opened. Expand cards
+        // that do not yet contain a Part value before reading.
+
+        for (
+          let cardIndex = 0;
+          cardIndex < await cardLocator.count();
+          cardIndex += 1
+        ) {
+
+          const card =
+            cardLocator.nth(cardIndex);
+
+
+          const partValue =
+            card
+              .locator('div')
+              .filter({
+                hasText: /^\s*Part\s*:\s*\S+/i
+              })
+              .first();
+
+
+          if (await partValue.count() === 0) {
+
+            const specs =
+              card
+                .locator(
+                  '[data-tctid="specs"]'
+                )
+                .first();
+
+
+            if (await specs.count() > 0) {
+
+              // Keyboard activation targets the link itself. A
+              // pointer click can be intercepted by the card's
+              // product-selection overlay and open the summary.
+              await specs.press('Enter');
+
+
+              await partValue
+                .waitFor({
+                  state: 'attached',
+                  timeout: 10000
+                })
+                .catch(() => {});
+
+            }
+
+          }
+
+        }
+
+
         cards =
-          await page
-            .locator(
-              '[data-tctid="result"]'
-            )
+          await cardLocator
             .evaluateAll(
               nodes =>
                 nodes.map(card => ({
