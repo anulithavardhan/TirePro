@@ -617,6 +617,10 @@ try {
     );
 
 
+    const resultUrl =
+      searchUrl(size);
+
+
     let cards = null;
     let lastError = '';
 
@@ -774,7 +778,25 @@ try {
                         '[data-tctid="product_price"]'
                       )
                       ?.textContent
-                      ?.trim() || ''
+                      ?.trim() || '',
+
+
+                  part:
+                    [...card.querySelectorAll('div')]
+                      .map(element =>
+                        [...element.children]
+                          .filter(child =>
+                            child.tagName === 'SPAN'
+                          )
+                          .map(span =>
+                            span.textContent?.trim() || ''
+                          )
+                      )
+                      .find(values =>
+                        /^part:?$/i.test(values[0] || '') &&
+                        values[1]
+                      )
+                      ?.[1] || ''
 
                 }))
             );
@@ -956,6 +978,14 @@ try {
             match.price,
 
 
+          url:
+            resultUrl,
+
+
+          part:
+            match.part,
+
+
           Website:
             'Tire Works',
 
@@ -1024,6 +1054,8 @@ const outputRows = [
     'product',
     'size',
     'price',
+    'url',
+    'part',
     'Website',
     'Clean Size',
     'Date of Scrape',
@@ -1038,6 +1070,10 @@ const outputRows = [
     r.size,
 
     r.price,
+
+    r.url,
+
+    r.part,
 
     r.Website,
 
